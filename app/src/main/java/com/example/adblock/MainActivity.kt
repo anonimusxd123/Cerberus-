@@ -65,7 +65,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun Dashboard(toggle: (Boolean) -> Unit) {
     val active by AdBlockVpnService.isActive.collectAsStateWithLifecycle()
-    val statsManager = remember { StatisticsManager(androidx.compose.ui.platform.LocalContext.current) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val statsManager = remember(context) { StatisticsManager(context) }
     val stats by statsManager.state.collectAsStateWithLifecycle()
     val stateColor = if (active) Green else Color(0xFFFF5B6E)
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -99,13 +100,13 @@ class MainActivity : ComponentActivity() {
 @Composable private fun MetricCard(modifier: Modifier, emoji: String, amount: Long, label: String) { Surface(modifier, color = Panel, shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) { Column(Modifier.padding(vertical = 14.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(emoji, fontSize = 18.sp); Spacer(Modifier.height(7.dp)); Text(amount.toString(), color = Green, fontWeight = FontWeight.Bold, fontSize = 19.sp); Text(label, color = Muted, fontSize = 9.sp) } } }
 
 @Composable private fun ControlPanel() {
-    val context = androidx.compose.ui.platform.LocalContext.current; val manager = remember { SettingsManager(context) }; val settings by manager.state.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current; val manager = remember(context) { SettingsManager(context) }; val settings by manager.state.collectAsStateWithLifecycle()
     Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder), modifier = Modifier.fillMaxWidth()) { Column { DashboardToggle("Bloquear anuncios", "Elimina dominios publicitarios", Icons.Default.Block, settings.blockAds) { manager.set { current -> current.copy(blockAds = it) } }; HorizontalDivider(color = PanelBorder); DashboardToggle("Bloquear trackers", "Reduce el rastreo entre sitios", Icons.Default.VisibilityOff, settings.blockTrackers) { manager.set { current -> current.copy(blockTrackers = it) } } } }
 }
 @Composable private fun DashboardToggle(title: String, detail: String, icon: ImageVector, value: Boolean, change: (Boolean) -> Unit) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Green); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold); Text(detail, color = Muted, fontSize = 10.sp) }; Switch(value, change, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Green)) } }
 
 @Composable private fun StatisticsScreen() {
-    val manager = remember { StatisticsManager(androidx.compose.ui.platform.LocalContext.current) }; val stats by manager.state.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current; val manager = remember(context) { StatisticsManager(context) }; val stats by manager.state.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().padding(24.dp)) { ScreenTitle("Estadísticas", "Actividad almacenada solo en este dispositivo"); Spacer(Modifier.height(20.dp)); LargeStatistic("Dominios bloqueados", stats.adsBlocked, Icons.Default.Block); LargeStatistic("Trackers bloqueados", stats.trackersBlocked, Icons.Default.VisibilityOff); LargeStatistic("Solicitudes permitidas", stats.allowed, Icons.Default.Public); Spacer(Modifier.weight(1f)); OutlinedButton(onClick = manager::reset, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)) { Text("RESTABLECER ESTADÍSTICAS") } }
 }
 @Composable private fun LargeStatistic(label: String, value: Long, icon: ImageVector) { Surface(Modifier.fillMaxWidth().padding(vertical = 5.dp), color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Green); Spacer(Modifier.width(16.dp)); Column { Text(value.toString(), color = Green, fontWeight = FontWeight.Bold, fontSize = 24.sp); Text(label, color = Muted, fontSize = 12.sp) } } } }
@@ -118,7 +119,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun SettingsScreen() {
-    val context = androidx.compose.ui.platform.LocalContext.current; val blocklist = remember { BlocklistManager(context) }; var white by remember { mutableStateOf("") }; var black by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current; val blocklist = remember(context) { BlocklistManager(context) }; var white by remember { mutableStateOf("") }; var black by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(24.dp)) { item { ScreenTitle("Ajustes", "Reglas locales del filtro DNS"); Spacer(Modifier.height(20.dp)); Text("LISTA BLANCA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(white, { white = it }, "Dominio que nunca se bloqueará") { if (blocklist.addAllowed(white)) white = "" }; Spacer(Modifier.height(18.dp)); Text("LISTA NEGRA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(black, { black = it }, "Dominio a bloquear") { if (blocklist.addBlocked(black)) black = "" }; Spacer(Modifier.height(22.dp)); Text("Motor: DNS UDP IPv4", color = Muted, fontSize = 11.sp); Text("Última actualización: ${if (blocklist.lastUpdated() == 0L) "sin cambios manuales" else DateFormat.getDateTimeInstance().format(blocklist.lastUpdated())}", color = Muted, fontSize = 11.sp); Text("Versión 0.1.0", color = Muted, fontSize = 11.sp) } }
 }
 @Composable private fun ScreenTitle(title: String, subtitle: String) { Text(title.uppercase(), letterSpacing = 1.sp, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold); Text(subtitle, color = Muted, fontSize = 12.sp) }
