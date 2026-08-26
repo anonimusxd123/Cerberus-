@@ -81,13 +81,16 @@ class AdAccessibilityService : AccessibilityService() {
     /**
      * Revisa TODAS las ventanas visibles (no solo la activa), porque un
      * overlay publicitario suele aparecer como una ventana adicional
-     * (TYPE_APPLICATION_OVERLAY) por encima del contenido normal.
+     * por encima del contenido normal (no es la ventana principal de la app).
      */
     private fun revisarVentanasActivas() {
         val ventanas = windows ?: return
         for (ventana in ventanas) {
             val root = ventana.root ?: continue
-            val esOverlay = ventana.type == AccessibilityWindowInfo.TYPE_APPLICATION_OVERLAY
+            // AccessibilityWindowInfo no expone un tipo "overlay de anuncio" directo.
+            // Cualquier ventana que NO sea la ventana principal de la app (TYPE_APPLICATION)
+            // se trata como sospechosa de ser un overlay (ads, banners, pop-ups).
+            val esOverlay = ventana.type != AccessibilityWindowInfo.TYPE_APPLICATION
             val puntuacion = escanearNodo(root, profundidad = 0)
 
             // Si es una ventana overlay, bajamos el umbral (son casi siempre ads).
@@ -95,7 +98,7 @@ class AdAccessibilityService : AccessibilityService() {
 
             if (puntuacion >= umbralEfectivo) {
                 Log.d(TAG, "Señales de anuncio: $puntuacion (overlay=$esOverlay). Cerrando.")
-                cerrarOverlay(root, ventana)
+                cerrarOverlay(root)
             }
         }
     }
@@ -126,19 +129,14 @@ class AdAccessibilityService : AccessibilityService() {
         return puntuacion
     }
 
-    private fun cerrarOverlay(root: AccessibilityNodeInfo, ventana: AccessibilityWindowInfo) {
+    private fun cerrarOverlay(root: AccessibilityNodeInfo) {
         val botonCierre = buscarBotonCierre(root)
         if (botonCierre != null) {
             botonCierre.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             return
         }
-        // Fallback 1: la propia ventana soporta "dismiss" (API 33+)
-        val dismissed = try {
-            ventana.remove()
-            true
-        } catch (e: Exception) {
-            false
-        }
+        // Fallback 1: si el propio nodo raíz soporta "descartar" (ACTION_DISMISS)
+        val dismissed = root.performAction(AccessibilityNodeInfo.ACTION_DISMISS)
         if (dismissed) return
 
         // Fallback 2: simular "atrás" para descartar el overlay
