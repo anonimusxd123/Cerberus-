@@ -15,6 +15,23 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // Llave de depuración FIJA (archivo app/debug.keystore, incluido en el repo).
+    // Sin esto, cada máquina de GitHub Actions genera una llave aleatoria distinta
+    // en cada ejecución, y el APK resultante no se puede instalar encima del anterior
+    // ("App no instalada" por conflicto de firma).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
