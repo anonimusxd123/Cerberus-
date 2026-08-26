@@ -23,7 +23,7 @@ class AdAccessibilityService : AccessibilityService() {
 
         // Umbral de puntuación para considerar que hay "suficientes señales" de anuncio.
         // Bajarlo = más agresivo (más falsos positivos posibles).
-        private const val UMBRAL_BLOQUEO = 3
+        private const val UMBRAL_BLOQUEO = 2
 
         // Palabras/frases visibles típicas de publicidad (con límites de palabra vía regex)
         private val PALABRAS_PUBLICIDAD = listOf(
@@ -92,13 +92,19 @@ class AdAccessibilityService : AccessibilityService() {
             // se trata como sospechosa de ser un overlay (ads, banners, pop-ups).
             val esOverlay = ventana.type != AccessibilityWindowInfo.TYPE_APPLICATION
             val puntuacion = escanearNodo(root, profundidad = 0)
+            val paqueteVentana = root.packageName?.toString().orEmpty()
+
+            // LOG DE DIAGNÓSTICO: se imprime SIEMPRE (aunque no dispare el bloqueo) para
+            // poder ver con `adb logcat -s AdAccessibilityService` qué está detectando
+            // realmente el servicio mientras un anuncio está en pantalla.
+            Log.d(TAG, "Ventana [$paqueteVentana] tipo=${ventana.type} overlay=$esOverlay puntuacion=$puntuacion")
 
             // Si es una ventana overlay, bajamos el umbral (son casi siempre ads).
             val umbralEfectivo = if (esOverlay) 1 else UMBRAL_BLOQUEO
 
             if (puntuacion >= umbralEfectivo) {
-                Log.d(TAG, "Señales de anuncio: $puntuacion (overlay=$esOverlay). Cerrando.")
-                cerrarOverlay(root)
+                Log.d(TAG, "★ Señales suficientes: $puntuacion (overlay=$esOverlay). Cerrando.")
+                cerrarOverlay(root, esOverlay)
             }
         }
     }
@@ -129,26 +135,63 @@ class AdAccessibilityService : AccessibilityService() {
         return puntuacion
     }
 
-    private fun cerrarOverlay(root: AccessibilityNodeInfo) {
+    private fun cerrarOverlay(root: AccessibilityNodeInfo, esOverlay: Boolean) {
         val botonCierre = buscarBotonCierre(root)
         if (botonCierre != null) {
             botonCierre.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            mostrarAviso("Anuncio detectado: botón cerrado")
             return
         }
+
+        // Sin botón de cierre encontrado: solo actuamos si es un overlay real
+        // (una ventana aparte, tipo pop-up/interstitial). Si es contenido normal
+        // de la app (ej. un post patrocinado en un feed), NO forzamos nada: no hay
+        // manera segura de "cerrarlo" sin sacar al usuario de la pantalla actual.
+        if (!esOverlay) {
+            Log.d(TAG, "Señal de anuncio en contenido embebido sin botón de cierre: no se actúa (evita romper la navegación).")
+            return
+        }
+
         // Fallback 1: si el propio nodo raíz soporta "descartar" (ACTION_DISMISS)
         val dismissed = root.performAction(AccessibilityNodeInfo.ACTION_DISMISS)
-        if (dismissed) return
+        if (dismissed) {
+            mostrarAviso("Anuncio detectado: overlay descartado")
+            return
+        }
 
         // Fallback 2: simular "atrás" para descartar el overlay
         performGlobalAction(GLOBAL_ACTION_BACK)
+        mostrarAviso("Anuncio detectado: se simuló \"atrás\"")
+    }
+
+    private var ultimoAviso = 0L
+    /** Toast simple para confirmar detección sin necesitar ADB/logcat. Con anti-spam de 2s. */
+    private fun mostrarAviso(mensaje: String) {
+        val ahora = System.currentTimeMillis()
+        if (ahora - ultimoAviso < 2000) return
+        ultimoAviso = ahora
+        android.widget.Toast.makeText(applicationContext, "Cerberus: $mensaje", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun buscarBotonCierre(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
         val etiqueta = (node.contentDescription?.toString() ?: node.text?.toString()).orEmpty()
-        if (node.isClickable && REGEX_BOTON_CIERRE.containsMatchIn(etiqueta)) {
-            return node
+
+        if (REGEX_BOTON_CIERRE.containsMatchIn(etiqueta)) {
+            // Caso simple: el propio nodo con el texto ya es clickeable.
+            if (node.isClickable) return node
+            // Caso real más común: el texto ("Omitir", "Saltar anuncio") está en un
+            // TextView/ícono hijo, y el elemento clickeable de verdad es un padre
+            // (el botón contenedor). Subimos hasta 5 niveles buscando ese padre.
+            var actual = node.parent
+            var niveles = 0
+            while (actual != null && niveles < 5) {
+                if (actual.isClickable) return actual
+                actual = actual.parent
+                niveles++
+            }
         }
+
         for (i in 0 until node.childCount) {
             val encontrado = buscarBotonCierre(node.getChild(i))
             if (encontrado != null) return encontrado
