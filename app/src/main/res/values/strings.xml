@@ -2,4 +2,5 @@
     <string name="app_name">Cerberus</string>
     <string name="notification_title">Cerberus</string>
     <string name="notification_text">Protección activa · filtro DNS en ejecución</string>
+    <string name="accessibility_service_description">Cerberus usa este permiso para leer el texto y la estructura de la pantalla y detectar elementos de publicidad (banners, overlays, pantallas de anuncio) dentro de otras apps, con el fin de cerrarlos automáticamente. No se envía información a internet ni se registra el contenido de otras apps: todo el análisis ocurre localmente en el teléfono.</string>
 </resources>

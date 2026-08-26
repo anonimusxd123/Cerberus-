@@ -14,5 +14,17 @@
             <intent-filter><action android:name="android.net.VpnService"/></intent-filter>
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Local DNS filtering VPN" />
         </service>
+        <service
+            android:name=".accessibility.AdAccessibilityService"
+            android:label="Cerberus - Bloqueo de anuncios en pantalla"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice.accessibility_service"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 </manifest>

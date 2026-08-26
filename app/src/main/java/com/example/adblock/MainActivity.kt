@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.adblock.accessibility.AccessibilityHelper
 import com.example.adblock.filtering.AppRuleManager
 import com.example.adblock.filtering.BlocklistManager
 import com.example.adblock.settings.SettingsManager
@@ -100,6 +101,49 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(16.dp))
         }
         item { ControlPanel() }
+        item { Spacer(Modifier.height(16.dp)); AccessibilityCard() }
+    }
+}
+
+@Composable private fun AccessibilityCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var activo by remember { mutableStateOf(AccessibilityHelper.estaServicioActivo(context)) }
+    // Refresca el estado cada vez que el Dashboard vuelve a primer plano (ej. al volver de Ajustes).
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                activo = AccessibilityHelper.estaServicioActivo(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    Surface(color = Panel, shape = RoundedCornerShape(14.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (activo) Green.copy(alpha = .4f) else PanelBorder), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Shield, null, tint = if (activo) Green else Muted, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("BLOQUEO EN PANTALLA", color = if (activo) Green else Muted, fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (activo) "Servicio de accesibilidad activo. Cerberus puede detectar y cerrar anuncios dentro de otras apps."
+                else "Para detectar y cerrar anuncios dentro de otras apps (banners, overlays, pantallas completas), Cerberus necesita el permiso de Accesibilidad.",
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Es seguro: este permiso solo se usa para leer el texto y la estructura de la pantalla y buscar patrones de publicidad. Cerberus no envía nada a internet, no registra lo que escribes ni accede a contraseñas o datos bancarios. Todo el análisis ocurre en tu teléfono.",
+                color = Muted, fontSize = 10.sp
+            )
+            if (!activo) {
+                Spacer(Modifier.height(14.dp))
+                Button(onClick = { AccessibilityHelper.abrirAjustesAccesibilidad(context) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)) {
+                    Text("Activar servicio de accesibilidad")
+                }
+            }
+        }
     }
 }
 
