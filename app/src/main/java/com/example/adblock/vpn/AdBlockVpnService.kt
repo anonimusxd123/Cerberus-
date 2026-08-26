@@ -10,7 +10,9 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
+import android.util.Log
 import com.example.adblock.MainActivity
+import com.example.adblock.filtering.AppRuleManager
 import com.example.adblock.filtering.BlocklistManager
 import com.example.adblock.filtering.FilterEngine
 import com.example.adblock.statistics.StatisticsManager
@@ -41,14 +43,32 @@ class AdBlockVpnService : VpnService() {
         statistics = StatisticsManager(this)
         startForeground(NOTIFICATION_ID, notification())
         try {
-            tun = Builder().setSession("Cerberus DNS")
+            val builder = Builder().setSession("Cerberus DNS")
                 .setMtu(1500).addAddress(VPN_ADDRESS, 32).addRoute(DNS_ADDRESS, 32).addDnsServer(DNS_ADDRESS)
-                .establish()
+            applyPerAppRules(builder)
+            tun = builder.establish()
             if (tun == null) throw IllegalStateException("Android no pudo crear la interfaz VPN")
             active.value = true
             startDnsLoop(tun!!)
         } catch (_: Exception) { stopProtection() }
         return Service.START_STICKY
+    }
+
+    /**
+     * Excluye del túnel las apps que el usuario apagó en la pestaña "Aplicaciones". Android solo
+     * permite fijar esta lista mientras se establece la interfaz VPN, así que el cambio se aplica
+     * la próxima vez que se (re)activa la protección.
+     */
+    private fun applyPerAppRules(builder: Builder) {
+        try {
+            val appRuleManager = AppRuleManager(this)
+            val installedPackages = packageManager.getInstalledApplications(0).map { it.packageName }
+            val excluded = appRuleManager.excludedPackages(installedPackages)
+            for (pkg in excluded) {
+                if (pkg == packageName) continue
+                try { builder.addDisallowedApplication(pkg) } catch (e: Exception) { Log.w(TAG, "No se pudo excluir $pkg", e) }
+            }
+        } catch (e: Exception) { Log.w(TAG, "No se pudieron aplicar las reglas por app", e) }
     }
 
     private fun startDnsLoop(descriptor: ParcelFileDescriptor) = thread(name = "adblock-dns", isDaemon = true) {
@@ -95,5 +115,5 @@ class AdBlockVpnService : VpnService() {
     private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle(getString(com.example.adblock.R.string.notification_title)).setContentText(getString(com.example.adblock.R.string.notification_text)).setOngoing(true).setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)).addAction(0, "Desactivar", PendingIntent.getService(this, 1, Intent(this, AdBlockVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)).build()
     override fun onCreate() { super.onCreate(); if (Build.VERSION.SDK_INT >= 26) (getSystemService(NotificationManager::class.java)).createNotificationChannel(NotificationChannel(CHANNEL_ID, "Cerberus · Protección activa", NotificationManager.IMPORTANCE_LOW)) }
 
-    companion object { const val ACTION_START = "com.example.adblock.START"; const val ACTION_STOP = "com.example.adblock.STOP"; private const val VPN_ADDRESS = "10.67.0.1"; private const val DNS_ADDRESS = "10.67.0.2"; private const val UPSTREAM_DNS = "1.1.1.1"; private const val CHANNEL_ID = "vpn"; private const val NOTIFICATION_ID = 42; private const val RULE_RELOAD_INTERVAL_MS = 5 * 60 * 1000L; private val active = MutableStateFlow(false); val isActive = active.asStateFlow() }
+    companion object { const val ACTION_START = "com.example.adblock.START"; const val ACTION_STOP = "com.example.adblock.STOP"; private const val VPN_ADDRESS = "10.67.0.1"; private const val DNS_ADDRESS = "10.67.0.2"; private const val UPSTREAM_DNS = "1.1.1.1"; private const val CHANNEL_ID = "vpn"; private const val NOTIFICATION_ID = 42; private const val TAG = "AdBlockVpnService"; private const val RULE_RELOAD_INTERVAL_MS = 5 * 60 * 1000L; private val active = MutableStateFlow(false); val isActive = active.asStateFlow() }
 }

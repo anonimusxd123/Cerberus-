@@ -2,11 +2,13 @@ package com.example.adblock
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,17 +25,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.adblock.filtering.AppRuleManager
 import com.example.adblock.filtering.BlocklistManager
 import com.example.adblock.settings.SettingsManager
 import com.example.adblock.statistics.StatisticsManager
 import com.example.adblock.vpn.AdBlockVpnService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 
 private val Background = Color(0xFF080A0F)
@@ -112,11 +119,88 @@ class MainActivity : ComponentActivity() {
 }
 @Composable private fun LargeStatistic(label: String, value: Long, icon: ImageVector) { Surface(Modifier.fillMaxWidth().padding(vertical = 5.dp), color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Green); Spacer(Modifier.width(16.dp)); Column { Text(value.toString(), color = Green, fontWeight = FontWeight.Bold, fontSize = 24.sp); Text(label, color = Muted, fontSize = 12.sp) } } } }
 
+private data class AppEntry(val label: String, val packageName: String, val isSystem: Boolean)
+
 @Composable private fun AppsScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val active by AdBlockVpnService.isActive.collectAsStateWithLifecycle()
-    val apps = remember { context.packageManager.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0).map { it.loadLabel(context.packageManager).toString() }.distinct().sorted() }
-    LazyColumn(Modifier.fillMaxSize().padding(24.dp)) { item { ScreenTitle("Aplicaciones", "El filtro DNS se aplica a apps que usan el DNS del sistema"); Spacer(Modifier.height(14.dp)) }; items(apps) { app -> Surface(Modifier.fillMaxWidth().padding(vertical = 3.dp), color = Panel, shape = RoundedCornerShape(10.dp)) { ListItem(headlineContent = { Text(app) }, supportingContent = { Text("Protección DNS", color = Muted) }, leadingContent = { Icon(Icons.Default.Android, null, tint = Green) }, trailingContent = { StatusPill(active) }) } } }
+    val appRuleManager = remember(context) { AppRuleManager(context) }
+    var query by remember { mutableStateOf("") }
+    var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    // Fuerza recomposición de los Switch cuando el usuario cambia una preferencia.
+    var ruleVersion by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        val pm = context.packageManager
+        val loaded = withContext(Dispatchers.Default) {
+            pm.getInstalledApplications(0).map { info ->
+                AppEntry(
+                    label = info.loadLabel(pm).toString(),
+                    packageName = info.packageName,
+                    isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                )
+            }.sortedBy { it.label.lowercase() }
+        }
+        apps = loaded
+        loading = false
+    }
+
+    val filtered = remember(apps, query) {
+        if (query.isBlank()) apps
+        else apps.filter { it.label.contains(query, ignoreCase = true) || it.packageName.contains(query, ignoreCase = true) }
+    }
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+        item {
+            Spacer(Modifier.height(20.dp))
+            ScreenTitle("Aplicaciones", "Todas las apps del dispositivo (sistema y usuario) · ${apps.size} instaladas")
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+                singleLine = true, placeholder = { Text("Buscar app o paquete…", color = Muted) },
+                leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = PanelBorder)
+            )
+            Spacer(Modifier.height(10.dp))
+            Surface(color = Color(0xFF123321), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, null, tint = Green, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Apaga una app para excluirla del filtro DNS. El cambio se aplica la próxima vez que actives la protección.", color = Muted, fontSize = 10.sp)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            if (loading) { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Green, trackColor = Panel); Spacer(Modifier.height(14.dp)) }
+        }
+        items(filtered, key = { it.packageName }) { app ->
+            key(ruleVersion) {
+                AppRow(app, appRuleManager.isProtected(app.packageName)) { enabled ->
+                    appRuleManager.setProtected(app.packageName, enabled)
+                    ruleVersion++
+                }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable private fun AppRow(app: AppEntry, protectedOn: Boolean, onChange: (Boolean) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val icon = remember(app.packageName) {
+        try { context.packageManager.getApplicationIcon(app.packageName).toBitmap(width = 96, height = 96).asImageBitmap() } catch (_: Exception) { null }
+    }
+    Surface(Modifier.fillMaxWidth().padding(vertical = 3.dp), color = Panel, shape = RoundedCornerShape(10.dp)) {
+        ListItem(
+            headlineContent = { Text(app.label, maxLines = 1) },
+            supportingContent = { Text(if (app.isSystem) "App del sistema · ${app.packageName}" else app.packageName, color = Muted, fontSize = 10.sp, maxLines = 1) },
+            leadingContent = {
+                if (icon != null) Image(icon, null, modifier = Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)))
+                else Icon(Icons.Default.Android, null, tint = Green)
+            },
+            trailingContent = { Switch(protectedOn, onChange, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Green)) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+        )
+    }
 }
 
 @Composable private fun SettingsScreen() {
@@ -153,6 +237,19 @@ class MainActivity : ComponentActivity() {
             }
         }
         Spacer(Modifier.height(18.dp))
+        Text("BLOQUEO AGRESIVO POR CATEGORÍA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp)
+        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) {
+            Column {
+                CategoryToggle(blocklist, "cat_youtube", "YouTube agresivo", "Bloquea servidores de anuncios propios de YouTube", Icons.Default.SmartDisplay)
+                HorizontalDivider(color = PanelBorder)
+                CategoryToggle(blocklist, "cat_facebook", "Facebook / Meta agresivo", "Bloquea red de anuncios y píxeles de Meta", Icons.Default.ThumbUp)
+                HorizontalDivider(color = PanelBorder)
+                CategoryToggle(blocklist, "cat_streaming", "Streaming y juegos agresivo", "Bloquea redes de anuncios de apps de streaming/juegos", Icons.Default.PlayCircle)
+                HorizontalDivider(color = PanelBorder)
+                CategoryToggle(blocklist, "cat_redirects", "Anti-redirección / popunder", "Bloquea anuncios que abren pestañas o redirigen a otra página", Icons.Default.OpenInNew)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
         Text("LISTA BLANCA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(white, { white = it }, "Dominio que nunca se bloqueará") { if (blocklist.addAllowed(white)) white = "" }
         Spacer(Modifier.height(18.dp))
         Text("LISTA NEGRA MANUAL", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(black, { black = it }, "Dominio a bloquear") { if (blocklist.addBlocked(black)) black = "" }
@@ -162,5 +259,10 @@ class MainActivity : ComponentActivity() {
         Text("Versión 0.1.0", color = Muted, fontSize = 11.sp)
     } }
 }
+@Composable private fun CategoryToggle(blocklist: BlocklistManager, key: String, title: String, detail: String, icon: ImageVector) {
+    var enabled by remember(key) { mutableStateOf(blocklist.isCategoryEnabled(key, true)) }
+    DashboardToggle(title, detail, icon, enabled) { value -> enabled = value; blocklist.setCategoryEnabled(key, value) }
+}
+
 @Composable private fun ScreenTitle(title: String, subtitle: String) { Text(title.uppercase(), letterSpacing = 1.sp, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold); Text(subtitle, color = Muted, fontSize = 12.sp) }
 @Composable private fun DomainInput(value: String, changed: (String) -> Unit, hint: String, submit: () -> Unit) { Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(value, changed, Modifier.weight(1f), label = { Text(hint) }, singleLine = true, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, focusedLabelColor = Green)); Spacer(Modifier.width(8.dp)); IconButton(submit, modifier = Modifier.background(Color(0xFF123321), CircleShape)) { Icon(Icons.Default.Add, "Añadir", tint = Green) } } }

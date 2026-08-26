@@ -10,13 +10,32 @@ Al activar la protección, Android crea una interfaz VPN **local** que anuncia u
 - reenvía las consultas permitidas a Cloudflare DNS (`1.1.1.1`) usando un socket protegido para que no vuelva a entrar en la VPN;
 - guarda únicamente contadores locales, no el historial de dominios.
 
-La lista inicial es deliberadamente pequeña y de prueba. Se pueden añadir dominios manuales a la lista blanca o negra; si la VPN ya está activa, desactívala y actívala para recargar esas reglas. Incluye interfaz Material 3, servicio en primer plano, estadísticas persistentes, listado de aplicaciones con lanzador y pruebas unitarias del motor de reglas.
+La lista inicial es deliberadamente pequeña y de prueba. Se pueden añadir dominios manuales a la lista blanca o negra; si la VPN ya está activa, desactívala y actívala para recargar esas reglas. Incluye interfaz Material 3, servicio en primer plano con notificación persistente, estadísticas persistentes, listado de **todas** las aplicaciones instaladas (sistema y usuario) con interruptor individual, categorías de bloqueo agresivo (YouTube, Facebook/Meta, streaming/juegos, anti-redirección/popunder) y pruebas unitarias del motor de reglas.
+
+### Notificación persistente
+
+Mientras la protección está activa, Android mantiene visible en la barra de notificaciones un aviso permanente ("Cerberus · Protección activa") con un botón para desactivarla. Esto es obligatorio en Android para cualquier `VpnService`/servicio en primer plano y es lo que confirma en todo momento que el filtro sigue encendido.
+
+### Todas las aplicaciones, con interruptor individual
+
+La pestaña **Aplicaciones** lista cada paquete instalado en el dispositivo —de sistema y de usuario, no solo las que tienen icono en el launcher— con buscador y un interruptor por app. Al apagar una app, su paquete se añade a la lista de "aplicaciones excluidas" del túnel VPN (`Builder.addDisallowedApplication`), así que su tráfico deja de pasar por el filtro DNS. Android solo permite fijar esa lista al crear la interfaz VPN, por lo que el cambio se aplica la próxima vez que se (re)activa la protección, tal y como indica el aviso dentro de la propia pantalla.
+
+### Bloqueo agresivo por categoría
+
+En **Ajustes → Bloqueo agresivo por categoría** se puede activar o desactivar, de forma independiente:
+
+- **YouTube agresivo**: dominios propios de anuncios/telemetría de YouTube (no toca `googlevideo.com` ni la API real, para no romper la reproducción).
+- **Facebook/Meta agresivo**: red de anuncios y píxeles de seguimiento de Meta que no forman parte del login o el feed.
+- **Streaming y juegos agresivo**: redes de anuncios habituales en apps de streaming de vídeo/audio y juegos.
+- **Anti-redirección/popunder**: redes de anuncios que abren pestañas nuevas o redirigen a otra página al tocar el reproductor, muy comunes en portales de streaming.
+
+Como con cualquier bloqueador DNS, esto no puede eliminar anuncios insertados en el propio stream de vídeo (mismo dominio que el contenido); es una limitación técnica del enfoque, no de esta app en particular.
 
 ## Limitaciones actuales
 
 No es un reenvío IP completo ni un filtro de paquetes. Esta versión solo procesa DNS IPv4 sobre UDP; no filtra DNS cifrado (DoH/DoT), IPv6, TCP DNS ni solicitudes resueltas desde caché. Algunas aplicaciones pueden usar sus propios resolvers o dominios compartidos con contenido legítimo. Por ello no promete bloquear todos los anuncios ni contenido específico de YouTube, Facebook u otras apps.
 
-El interruptor de inicio automático se guarda como preferencia, pero no inicia aún un servicio tras reiniciar Android: hacerlo correctamente requiere una estrategia explícita para las restricciones de arranque y foreground services actuales. Las excepciones por aplicación también quedan para un motor de paquetes posterior; la pantalla solo muestra las apps identificables a través del lanzador.
+El interruptor de inicio automático se guarda como preferencia, pero no inicia aún un servicio tras reiniciar Android: hacerlo correctamente requiere una estrategia explícita para las restricciones de arranque y foreground services actuales. Las exclusiones por aplicación funcionan a nivel de todo el tráfico de la app (dentro/fuera del túnel), no de "bloquear solo anuncios en esa app": Android no expone un motor de paquetes por app en `VpnService`, así que un control más fino (permitir la app pero seguir filtrando sus anuncios) requeriría interceptar y reescribir paquetes IP/TCP completos, no solo DNS.
 
 ## Compilar sin Android Studio
 
