@@ -1,1 +1,5 @@
-<resources><string name="app_name">AdBlock Android</string></resources>
+<resources>
+    <string name="app_name">Cerberus</string>
+    <string name="notification_title">Cerberus</string>
+    <string name="notification_text">Protección activa · filtro DNS en ejecución</string>
+</resources>

@@ -29,15 +29,19 @@ class AdBlockVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private lateinit var engine: FilterEngine
     private lateinit var statistics: StatisticsManager
+    private lateinit var blocklistManager: BlocklistManager
+    private var lastRuleReload = 0L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopProtection(); return Service.START_NOT_STICKY }
         if (!running.compareAndSet(false, true)) return Service.START_STICKY
-        engine = BlocklistManager(this).let { FilterEngine(it.blockedDomains(), it.whitelist()) }
+        blocklistManager = BlocklistManager(this)
+        engine = FilterEngine(blocklistManager.blockedDomains(), blocklistManager.whitelist())
+        lastRuleReload = System.currentTimeMillis()
         statistics = StatisticsManager(this)
         startForeground(NOTIFICATION_ID, notification())
         try {
-            tun = Builder().setSession("AdBlock Android DNS")
+            tun = Builder().setSession("Cerberus DNS")
                 .setMtu(1500).addAddress(VPN_ADDRESS, 32).addRoute(DNS_ADDRESS, 32).addDnsServer(DNS_ADDRESS)
                 .establish()
             if (tun == null) throw IllegalStateException("Android no pudo crear la interfaz VPN")
@@ -53,6 +57,7 @@ class AdBlockVpnService : VpnService() {
             while (running.get()) {
                 val size = try { input.read(buffer) } catch (_: Exception) { break }
                 if (size <= 0) continue
+                maybeReloadRules()
                 val request = DnsPacket.parseIpv4Udp(buffer, size) ?: continue
                 val domain = DnsPacket.questionDomain(request.dns) ?: continue
                 val blocked = engine.isBlocked(domain) && blockingEnabledFor(domain)
@@ -60,6 +65,14 @@ class AdBlockVpnService : VpnService() {
                 if (answer != null) output.write(DnsPacket.ipv4UdpResponse(request.sourceAddress, request.sourcePort, answer))
             }
         }}
+    }
+
+    /** Recarga listas negras/blancas cada 5 min como máximo, sin bloquear el hilo de DNS. */
+    private fun maybeReloadRules() {
+        val now = System.currentTimeMillis()
+        if (now - lastRuleReload < RULE_RELOAD_INTERVAL_MS) return
+        lastRuleReload = now
+        engine.replaceLists(blocklistManager.blockedDomains(), blocklistManager.whitelist())
     }
 
     private fun resolve(query: ByteArray): ByteArray? = try {
@@ -79,8 +92,8 @@ class AdBlockVpnService : VpnService() {
     private fun stopProtection() { running.set(false); tun?.close(); tun = null; active.value = false; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
     override fun onDestroy() { stopProtection(); super.onDestroy() }
 
-    private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle("AdBlock Android").setContentText("Protección DNS activa").setOngoing(true).setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)).addAction(0, "Desactivar", PendingIntent.getService(this, 1, Intent(this, AdBlockVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)).build()
-    override fun onCreate() { super.onCreate(); if (Build.VERSION.SDK_INT >= 26) (getSystemService(NotificationManager::class.java)).createNotificationChannel(NotificationChannel(CHANNEL_ID, "Protección VPN", NotificationManager.IMPORTANCE_LOW)) }
+    private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle(getString(com.example.adblock.R.string.notification_title)).setContentText(getString(com.example.adblock.R.string.notification_text)).setOngoing(true).setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)).addAction(0, "Desactivar", PendingIntent.getService(this, 1, Intent(this, AdBlockVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)).build()
+    override fun onCreate() { super.onCreate(); if (Build.VERSION.SDK_INT >= 26) (getSystemService(NotificationManager::class.java)).createNotificationChannel(NotificationChannel(CHANNEL_ID, "Cerberus · Protección activa", NotificationManager.IMPORTANCE_LOW)) }
 
-    companion object { const val ACTION_START = "com.example.adblock.START"; const val ACTION_STOP = "com.example.adblock.STOP"; private const val VPN_ADDRESS = "10.67.0.1"; private const val DNS_ADDRESS = "10.67.0.2"; private const val UPSTREAM_DNS = "1.1.1.1"; private const val CHANNEL_ID = "vpn"; private const val NOTIFICATION_ID = 42; private val active = MutableStateFlow(false); val isActive = active.asStateFlow() }
+    companion object { const val ACTION_START = "com.example.adblock.START"; const val ACTION_STOP = "com.example.adblock.STOP"; private const val VPN_ADDRESS = "10.67.0.1"; private const val DNS_ADDRESS = "10.67.0.2"; private const val UPSTREAM_DNS = "1.1.1.1"; private const val CHANNEL_ID = "vpn"; private const val NOTIFICATION_ID = 42; private const val RULE_RELOAD_INTERVAL_MS = 5 * 60 * 1000L; private val active = MutableStateFlow(false); val isActive = active.asStateFlow() }
 }

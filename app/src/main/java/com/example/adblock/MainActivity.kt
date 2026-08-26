@@ -33,6 +33,7 @@ import com.example.adblock.filtering.BlocklistManager
 import com.example.adblock.settings.SettingsManager
 import com.example.adblock.statistics.StatisticsManager
 import com.example.adblock.vpn.AdBlockVpnService
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 
 private val Background = Color(0xFF080A0F)
@@ -119,8 +120,47 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun SettingsScreen() {
-    val context = androidx.compose.ui.platform.LocalContext.current; val blocklist = remember(context) { BlocklistManager(context) }; var white by remember { mutableStateOf("") }; var black by remember { mutableStateOf("") }
-    LazyColumn(Modifier.fillMaxSize().padding(24.dp)) { item { ScreenTitle("Ajustes", "Reglas locales del filtro DNS"); Spacer(Modifier.height(20.dp)); Text("LISTA BLANCA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(white, { white = it }, "Dominio que nunca se bloqueará") { if (blocklist.addAllowed(white)) white = "" }; Spacer(Modifier.height(18.dp)); Text("LISTA NEGRA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(black, { black = it }, "Dominio a bloquear") { if (blocklist.addBlocked(black)) black = "" }; Spacer(Modifier.height(22.dp)); Text("Motor: DNS UDP IPv4", color = Muted, fontSize = 11.sp); Text("Última actualización: ${if (blocklist.lastUpdated() == 0L) "sin cambios manuales" else DateFormat.getDateTimeInstance().format(blocklist.lastUpdated())}", color = Muted, fontSize = 11.sp); Text("Versión 0.1.0", color = Muted, fontSize = 11.sp) } }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val blocklist = remember(context) { BlocklistManager(context) }
+    val settingsManager = remember(context) { SettingsManager(context) }
+    val settings by settingsManager.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var white by remember { mutableStateOf("") }; var black by remember { mutableStateOf("") }
+    var updating by remember { mutableStateOf(false) }
+    var remoteCount by remember { mutableStateOf(blocklist.remoteRules().size) }
+    var remoteUpdatedAt by remember { mutableStateOf(blocklist.remoteRulesUpdatedAt()) }
+    LazyColumn(Modifier.fillMaxSize().padding(24.dp)) { item {
+        ScreenTitle("Ajustes", "Reglas locales del filtro DNS")
+        Spacer(Modifier.height(20.dp))
+        Text("LISTAS NEGRAS EN LÍNEA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp)
+        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) {
+            Column {
+                DashboardToggle("Actualización automática", "Descarga listas públicas de anuncios cada ~12h", Icons.Default.CloudSync, settings.autoUpdate) { enabled -> settingsManager.set { it.copy(autoUpdate = enabled) } }
+                HorizontalDivider(color = PanelBorder)
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (remoteCount == 0) "Sin listas remotas descargadas" else "$remoteCount dominios de listas públicas", fontSize = 12.sp)
+                        Text(if (remoteUpdatedAt == 0L) "Pulsa actualizar para la primera descarga" else "Actualizado: ${DateFormat.getDateTimeInstance().format(remoteUpdatedAt)}", color = Muted, fontSize = 10.sp)
+                    }
+                    OutlinedButton(enabled = !updating, onClick = {
+                        updating = true
+                        scope.launch {
+                            val result = com.example.adblock.filtering.RemoteBlocklistUpdater.refreshNow(context)
+                            remoteCount = result.domainCount; remoteUpdatedAt = blocklist.remoteRulesUpdatedAt(); updating = false
+                        }
+                    }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)) { Text(if (updating) "Actualizando…" else "Actualizar ahora") }
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("LISTA BLANCA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(white, { white = it }, "Dominio que nunca se bloqueará") { if (blocklist.addAllowed(white)) white = "" }
+        Spacer(Modifier.height(18.dp))
+        Text("LISTA NEGRA MANUAL", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(black, { black = it }, "Dominio a bloquear") { if (blocklist.addBlocked(black)) black = "" }
+        Spacer(Modifier.height(22.dp))
+        Text("Motor: DNS UDP IPv4", color = Muted, fontSize = 11.sp)
+        Text("Última regla manual: ${if (blocklist.lastUpdated() == 0L) "sin cambios manuales" else DateFormat.getDateTimeInstance().format(blocklist.lastUpdated())}", color = Muted, fontSize = 11.sp)
+        Text("Versión 0.1.0", color = Muted, fontSize = 11.sp)
+    } }
 }
 @Composable private fun ScreenTitle(title: String, subtitle: String) { Text(title.uppercase(), letterSpacing = 1.sp, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold); Text(subtitle, color = Muted, fontSize = 12.sp) }
 @Composable private fun DomainInput(value: String, changed: (String) -> Unit, hint: String, submit: () -> Unit) { Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(value, changed, Modifier.weight(1f), label = { Text(hint) }, singleLine = true, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, focusedLabelColor = Green)); Spacer(Modifier.width(8.dp)); IconButton(submit, modifier = Modifier.background(Color(0xFF123321), CircleShape)) { Icon(Icons.Default.Add, "Añadir", tint = Green) } } }
