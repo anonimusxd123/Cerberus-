@@ -6,6 +6,10 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import com.example.adblock.ml.AdClassifier
+import com.example.adblock.ml.DatasetLogger
+import com.example.adblock.ml.NodeFeatures
+import com.example.adblock.settings.SettingsManager
 
 /**
  * Servicio de accesibilidad que detecta y cierra ventanas/overlays de
@@ -15,6 +19,14 @@ import android.view.accessibility.AccessibilityWindowInfo
  * solo reacciona una vez que el anuncio ya está pintado en pantalla,
  * intentando pulsar su botón de cierre o, en su defecto, simulando "atrás".
  * Complementa (no reemplaza) el filtro DNS de AdBlockVpnService.
+ *
+ * Detección: combina dos señales por nodo
+ *   1. Heurística de reglas (regex de texto + resource-ids de SDKs de ads
+ *      conocidos) — la que ya existía, siempre disponible.
+ *   2. Modelo LiteRT (`ad_classifier.tflite`, ver ml/README_ML.md) que da
+ *      una probabilidad aprendida a partir de las mismas features.
+ * Si el modelo no cargó (no existe el .tflite, o falló), el servicio sigue
+ * funcionando solo con la heurística.
  */
 class AdAccessibilityService : AccessibilityService() {
 
@@ -25,31 +37,19 @@ class AdAccessibilityService : AccessibilityService() {
         // Bajarlo = más agresivo (más falsos positivos posibles).
         private const val UMBRAL_BLOQUEO = 2
 
-        // Palabras/frases visibles típicas de publicidad (con límites de palabra vía regex)
-        private val PALABRAS_PUBLICIDAD = listOf(
-            "publicidad", "anuncio", "anuncios", "patrocinado", "patrocinada",
-            "advertisement", "advertising", "sponsored", "promoted", "promocionado",
-            "\\bad\\b", "\\bads\\b", "install now", "instalar ahora",
-            "learn more", "más información", "descargar ahora", "shop now"
-        )
+        // Puntos que aporta el modelo cuando está muy seguro (prob >= UMBRAL_MODELO_ALTA).
+        // Se sigue sumando a la puntuación de la heurística de reglas, no la reemplaza.
+        private const val UMBRAL_MODELO_ALTA = 0.85f
+        private const val UMBRAL_MODELO_MEDIA = 0.6f
 
         private val REGEX_PUBLICIDAD = Regex(
-            PALABRAS_PUBLICIDAD.joinToString("|"),
+            listOf(
+                "publicidad", "anuncio", "anuncios", "patrocinado", "patrocinada",
+                "advertisement", "advertising", "sponsored", "promoted", "promocionado",
+                "\\bad\\b", "\\bads\\b", "install now", "instalar ahora",
+                "learn more", "más información", "descargar ahora", "shop now"
+            ).joinToString("|"),
             RegexOption.IGNORE_CASE
-        )
-
-        // resource-id / paquetes típicos de SDKs de ads conocidos.
-        // Esta señal es mucho más confiable que el texto visible.
-        private val VIEW_ID_PATTERNS = listOf(
-            "com.google.android.gms.ads",     // AdMob
-            "com.google.ads.mediation",
-            "adview", "ad_container", "ad_layout", "ad_frame", "native_ad",
-            "com.facebook.ads",                 // Meta Audience Network
-            "com.unity3d.ads",                  // Unity Ads
-            "com.applovin",                     // AppLovin
-            "com.mopub",                        // MoPub
-            "com.ironsource",                   // ironSource
-            "banner_container", "interstitial"
         )
 
         private val REGEX_BOTON_CIERRE = Regex(
@@ -57,6 +57,10 @@ class AdAccessibilityService : AccessibilityService() {
             RegexOption.IGNORE_CASE
         )
     }
+
+    private var clasificador: AdClassifier? = null
+    private var datasetLogger: DatasetLogger? = null
+    private lateinit var settingsManager: SettingsManager
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -66,15 +70,33 @@ class AdAccessibilityService : AccessibilityService() {
             AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
             AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         serviceInfo = info
-        Log.d(TAG, "Servicio de accesibilidad conectado")
+
+        settingsManager = SettingsManager(applicationContext)
+        clasificador = AdClassifier.cargarSiExiste(applicationContext)
+        if (settingsManager.state.value.collectTrainingData) {
+            datasetLogger = DatasetLogger(applicationContext)
+        }
+
+        Log.d(TAG, "Servicio de accesibilidad conectado (modelo cargado=${clasificador != null})")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // La recolección puede activarse/desactivarse en Ajustes sin reiniciar el servicio.
+                sincronizarDatasetLogger()
                 revisarVentanasActivas()
             }
+        }
+    }
+
+    private fun sincronizarDatasetLogger() {
+        val activo = ::settingsManager.isInitialized && settingsManager.state.value.collectTrainingData
+        if (activo && datasetLogger == null) {
+            datasetLogger = DatasetLogger(applicationContext)
+        } else if (!activo && datasetLogger != null) {
+            datasetLogger = null
         }
     }
 
@@ -91,8 +113,8 @@ class AdAccessibilityService : AccessibilityService() {
             // Cualquier ventana que NO sea la ventana principal de la app (TYPE_APPLICATION)
             // se trata como sospechosa de ser un overlay (ads, banners, pop-ups).
             val esOverlay = ventana.type != AccessibilityWindowInfo.TYPE_APPLICATION
-            val puntuacion = escanearNodo(root, profundidad = 0)
             val paqueteVentana = root.packageName?.toString().orEmpty()
+            val puntuacion = escanearNodo(root, profundidad = 0, paquete = paqueteVentana, esOverlay = esOverlay)
 
             // LOG DE DIAGNÓSTICO: se imprime SIEMPRE (aunque no dispare el bloqueo) para
             // poder ver con `adb logcat -s AdAccessibilityService` qué está detectando
@@ -110,7 +132,12 @@ class AdAccessibilityService : AccessibilityService() {
     }
 
     /** Recorre el árbol de nodos acumulando una puntuación de "señales de publicidad". */
-    private fun escanearNodo(node: AccessibilityNodeInfo?, profundidad: Int): Int {
+    private fun escanearNodo(
+        node: AccessibilityNodeInfo?,
+        profundidad: Int,
+        paquete: String,
+        esOverlay: Boolean
+    ): Int {
         if (node == null || profundidad > 40) return 0
         var puntuacion = 0
 
@@ -119,17 +146,56 @@ class AdAccessibilityService : AccessibilityService() {
         val viewId = node.viewIdResourceName.orEmpty()
         val clase = node.className?.toString().orEmpty()
 
+        // --- Señal 1: heurística de reglas (la original) ---
         if (REGEX_PUBLICIDAD.containsMatchIn(texto)) puntuacion += 2
         if (REGEX_PUBLICIDAD.containsMatchIn(descripcion)) puntuacion += 2
-        if (VIEW_ID_PATTERNS.any { viewId.contains(it, ignoreCase = true) }) puntuacion += 3
+        if (NodeFeatures.VIEW_ID_PATTERNS.any { viewId.contains(it, ignoreCase = true) }) puntuacion += 3
         if (clase.contains("WebView", ignoreCase = true) &&
             (texto.isNotBlank() || descripcion.isNotBlank())
         ) {
             puntuacion += 1
         }
 
+        // --- Señal 2: modelo LiteRT (opcional, suma encima de la heurística) ---
+        val features = NodeFeatures.extract(
+            texto = texto,
+            contentDescription = descripcion,
+            viewId = viewId,
+            className = clase,
+            isClickable = node.isClickable,
+            depth = profundidad,
+            childCount = node.childCount
+        )
+        val modelo = clasificador
+        if (modelo != null) {
+            val prob = try {
+                modelo.predictProb(features)
+            } catch (e: Exception) {
+                Log.w(TAG, "Fallo al inferir con el modelo, se ignora esta señal", e)
+                null
+            }
+            if (prob != null) {
+                puntuacion += when {
+                    prob >= UMBRAL_MODELO_ALTA -> 3
+                    prob >= UMBRAL_MODELO_MEDIA -> 1
+                    else -> 0
+                }
+            }
+        }
+
+        // --- Recolección de dataset (opcional, solo si el usuario la activó) ---
+        // Solo registramos nodos con contenido (evita miles de filas vacías/redundantes).
+        if (texto.isNotBlank() || descripcion.isNotBlank() || viewId.isNotBlank()) {
+            datasetLogger?.registrar(
+                features = features,
+                paquete = paquete,
+                textoBruto = descripcion.ifBlank { texto },
+                esOverlay = esOverlay
+            )
+        }
+
         for (i in 0 until node.childCount) {
-            puntuacion += escanearNodo(node.getChild(i), profundidad + 1)
+            puntuacion += escanearNodo(node.getChild(i), profundidad + 1, paquete, esOverlay)
             if (i > 200) break // salvaguarda ante árboles anómalos
         }
         return puntuacion
@@ -201,5 +267,11 @@ class AdAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.d(TAG, "Servicio de accesibilidad interrumpido")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        clasificador?.close()
+        clasificador = null
     }
 }

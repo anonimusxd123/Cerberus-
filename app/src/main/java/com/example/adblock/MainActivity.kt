@@ -33,9 +33,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.content.FileProvider
 import com.example.adblock.accessibility.AccessibilityHelper
 import com.example.adblock.filtering.AppRuleManager
 import com.example.adblock.filtering.BlocklistManager
+import com.example.adblock.ml.DatasetLogger
 import com.example.adblock.settings.SettingsManager
 import com.example.adblock.statistics.StatisticsManager
 import com.example.adblock.vpn.AdBlockVpnService
@@ -294,6 +296,26 @@ private data class AppEntry(val label: String, val packageName: String, val isSy
             }
         }
         Spacer(Modifier.height(18.dp))
+        Text("DETECCIÓN CON IA (LiteRT)", color = Green, fontSize = 10.sp, letterSpacing = 1.sp)
+        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), color = Panel, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, PanelBorder)) {
+            Column {
+                DashboardToggle(
+                    "Recolectar datos de entrenamiento",
+                    "Guarda en el teléfono (sin subir nada) las señales de los nodos vistos, para poder etiquetarlas y reentrenar el modelo",
+                    Icons.Default.Memory,
+                    settings.collectTrainingData
+                ) { enabled -> settingsManager.set { it.copy(collectTrainingData = enabled) } }
+                HorizontalDivider(color = PanelBorder)
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Exportar dataset local", fontSize = 12.sp)
+                        Text("Comparte el CSV para etiquetarlo y reentrenar (ml/train.py)", color = Muted, fontSize = 10.sp)
+                    }
+                    OutlinedButton(onClick = { compartirDataset(context) }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)) { Text("Compartir") }
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
         Text("LISTA BLANCA", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(white, { white = it }, "Dominio que nunca se bloqueará") { if (blocklist.addAllowed(white)) white = "" }
         Spacer(Modifier.height(18.dp))
         Text("LISTA NEGRA MANUAL", color = Green, fontSize = 10.sp, letterSpacing = 1.sp); DomainInput(black, { black = it }, "Dominio a bloquear") { if (blocklist.addBlocked(black)) black = "" }
@@ -303,6 +325,21 @@ private data class AppEntry(val label: String, val packageName: String, val isSy
         Text("Versión 0.1.0", color = Muted, fontSize = 11.sp)
     } }
 }
+private fun compartirDataset(context: android.content.Context) {
+    val archivo = DatasetLogger(context).archivoActual()
+    if (!archivo.exists() || archivo.length() == 0L) {
+        android.widget.Toast.makeText(context, "Aún no hay datos recolectados", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", archivo)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/csv"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Compartir dataset de Cerberus").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
 @Composable private fun CategoryToggle(blocklist: BlocklistManager, key: String, title: String, detail: String, icon: ImageVector) {
     var enabled by remember(key) { mutableStateOf(blocklist.isCategoryEnabled(key, true)) }
     DashboardToggle(title, detail, icon, enabled) { value -> enabled = value; blocklist.setCategoryEnabled(key, value) }

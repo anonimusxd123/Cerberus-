@@ -66,14 +66,40 @@ Al subir el proyecto a GitHub, el flujo `.github/workflows/build.yml` se ejecuta
 3. Acepta el diálogo oficial de Android para la VPN. La notificación persistente confirma que el filtro DNS está activo.
 4. Para una prueba controlada, añade `ads.example.com` a la lista negra y consulta ese dominio desde una herramienta DNS o app que use el DNS del sistema. Debe recibir una respuesta de dominio inexistente.
 
+## Bloqueo en pantalla con accesibilidad + IA (LiteRT)
+
+Además del filtro DNS, `accessibility/AdAccessibilityService` usa el
+`AccessibilityService` de Android (activación manual del usuario en
+Ajustes de accesibilidad) para detectar y cerrar overlays publicitarios
+que ya se pintaron en pantalla dentro de otras apps: banners, intersticiales,
+pop-ups. Esto **no** intercepta red ni reemplaza el filtro DNS — actúa
+después, sobre lo que ya se ve.
+
+La detección combina dos señales por nodo de pantalla:
+
+1. **Heurística de reglas**: regex sobre texto visible + resource-ids
+   conocidos de SDKs de ads (AdMob, Meta Audience Network, Unity Ads,
+   AppLovin, ironSource...).
+2. **Modelo LiteRT** (`ml/`, `app/src/main/assets/ad_classifier.tflite`):
+   un clasificador pequeño (~300 parámetros) entrenado sobre las mismas
+   features, que aporta una probabilidad aprendida. Si el modelo no está
+   presente, el servicio sigue funcionando solo con las reglas.
+
+El pipeline de entrenamiento — incluyendo cómo recolectar datos reales
+desde la propia app para reentrenar — está documentado en
+[`ml/README_ML.md`](ml/README_ML.md).
+
 ## Arquitectura y privacidad
 
 - `vpn/`: interfaz VPN local y codec mínimo de DNS/IP.
 - `filtering/`: matcher de dominios basado en `HashSet`, lista local y listas blanca/negra.
 - `statistics/`: contadores en `SharedPreferences`.
 - `settings/`: preferencias locales de interfaz.
+- `accessibility/`: servicio de accesibilidad que cierra overlays publicitarios en pantalla.
+- `ml/` (Kotlin, dentro de `app/.../ml/`): extracción de features y wrapper del intérprete LiteRT.
+- `ml/` (raíz del repo, Python): pipeline de entrenamiento y exportación a `.tflite`.
 
-No hay analítica, publicidad, cuenta de usuario ni backend propio. La consulta DNS permitida se envía al resolver configurado para obtener su respuesta; no se persisten los nombres de dominio consultados.
+No hay analítica, publicidad, cuenta de usuario ni backend propio. La consulta DNS permitida se envía al resolver configurado para obtener su respuesta; no se persisten los nombres de dominio consultados. El dataset de entrenamiento (si activas la recolección) se queda en el almacenamiento local de la app hasta que tú decides compartirlo — nunca se sube solo.
 
 ## Próximas mejoras
 
@@ -81,5 +107,6 @@ No hay analítica, publicidad, cuenta de usuario ni backend propio. La consulta 
 2. Implementar DNS TCP, IPv6 y políticas para DoH/DoT cuando sea técnicamente y legalmente apropiado.
 3. Sustituir el codec mínimo por un motor de reenvío IP/UDP/TCP local robusto, con reglas por aplicación y excepciones reales.
 4. Incorporar pruebas instrumentadas en un dispositivo físico y monitorización de errores local y opt-in.
+5. Ampliar el dataset de anuncios con ejemplos reales recolectados desde la app (ver `ml/README_ML.md`) y evaluar features adicionales (posición/tamaño del nodo en pantalla).
 
 Versiones: Android Gradle Plugin 8.7.3, Kotlin 2.0.21, Gradle 8.9 y JDK 17.

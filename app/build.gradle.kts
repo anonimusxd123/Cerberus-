@@ -38,6 +38,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    // El modelo .tflite (app/src/main/assets/ad_classifier.tflite) debe ir SIN
+    // comprimir dentro del APK, o el runtime de LiteRT no puede mapearlo en memoria.
+    androidResources { noCompress.add("tflite") }
 }
 
 dependencies {
@@ -51,6 +54,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    // LiteRT (antes TensorFlow Lite): motor de inferencia on-device para
+    // ad_classifier.tflite. Mantiene el paquete org.tensorflow.lite.Interpreter
+    // por compatibilidad (ver AdClassifier.kt).
+    implementation("com.google.ai.edge.litert:litert:1.4.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

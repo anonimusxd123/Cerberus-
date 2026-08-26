@@ -1,0 +1,4 @@
+tensorflow-cpu>=2.20
+pandas>=2.0
+numpy>=1.26
+scikit-learn>=1.4
