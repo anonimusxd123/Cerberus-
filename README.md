@@ -24,10 +24,10 @@ La pestaña **Aplicaciones** lista cada paquete instalado en el dispositivo —d
 
 En **Ajustes → Bloqueo agresivo por categoría** se puede activar o desactivar, de forma independiente:
 
-- **YouTube agresivo**: dominios propios de anuncios/telemetría de YouTube (no toca `googlevideo.com` ni la API real, para no romper la reproducción).
+- **YouTube agresivo**: dominios propios de anuncios/telemetría de YouTube, verificados contra fuentes públicas activas de Pi-hole/AdGuard (`googleads.g.doubleclick.net`, `pagead2.googlesyndication.com`, `tpc.googlesyndication.com`, `securepubads.g.doubleclick.net`, etc.). **Deliberadamente no** incluye hosts sueltos de `googlevideo.com` (del tipo `r1---sn-xxxx.googlevideo.com`): son los mismos servidores que entregan el vídeo real, y varios usuarios de Pi-hole reportan que bloquear esos hosts dejaba el reproductor cargando indefinidamente en cuanto aparecía un anuncio. No toca `googlevideo.com` ni la API real para no romper la reproducción.
 - **Facebook/Meta agresivo**: red de anuncios y píxeles de seguimiento de Meta que no forman parte del login o el feed.
-- **Streaming y juegos agresivo**: redes de anuncios habituales en apps de streaming de vídeo/audio y juegos.
-- **Anti-redirección/popunder**: redes de anuncios que abren pestañas nuevas o redirigen a otra página al tocar el reproductor, muy comunes en portales de streaming.
+- **Streaming y juegos agresivo**: plataformas de "video ad tech" y redes de anuncios habituales en apps de streaming de vídeo/audio y juegos (DoubleClick/2MDN, Sizmek/serving-sys, TubeMogul, Innovid, Vungle, Chartboost, etc.).
+- **Anti-redirección/popunder**: núcleo local de redes de popunder conocidas, **complementado automáticamente** con la lista pública [HaGeZi's Pop-Up Ads DNS Blocklist](https://github.com/hagezi/dns-blocklists) (más de 50 000 dominios, actualizada a diario) cuando "Actualización automática" está activa. Esta es la fuente más eficaz para bloquear los anuncios que abren pestañas o redirigen a otra página al tocar el reproductor, muy comunes en portales de streaming.
 
 Como con cualquier bloqueador DNS, esto no puede eliminar anuncios insertados en el propio stream de vídeo (mismo dominio que el contenido); es una limitación técnica del enfoque, no de esta app en particular.
 
